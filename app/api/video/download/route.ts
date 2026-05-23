@@ -17,27 +17,31 @@ function getDlpPath(): string {
     return srcPath;
   }
 
-  // On Vercel / serverless (Linux), copy the binary to /tmp to ensure execution permissions
   const destPath = path.join("/tmp", binaryName);
-  if (!fs.existsSync(destPath)) {
-    try {
-      fs.copyFileSync(srcPath, destPath);
-      fs.chmodSync(destPath, 0o755);
-    } catch (e) {
-      console.error("Failed to copy/chmod yt-dlp Linux binary:", e);
-    }
+
+  if (!fs.existsSync(srcPath)) {
+    throw new Error(`yt-dlp binary not found at ${srcPath}`);
   }
+
+  if (!fs.existsSync(destPath)) {
+    fs.copyFileSync(srcPath, destPath);
+  }
+
+  fs.chmodSync(destPath, 0o755);
+
   return destPath;
 }
 
-const isMac = process.platform === "darwin";
-const TMP_DIR = isMac
-  ? path.join(process.cwd(), ".tmp-downloads")
-  : os.tmpdir();
+function getTmpDir(): string {
+  const tmpDir = process.platform === "darwin"
+    ? path.join(process.cwd(), ".tmp-downloads")
+    : os.tmpdir();
 
-// Ensure tmp dir exists
-if (!fs.existsSync(TMP_DIR)) {
-  fs.mkdirSync(TMP_DIR, { recursive: true });
+  if (!fs.existsSync(tmpDir)) {
+    fs.mkdirSync(tmpDir, { recursive: true });
+  }
+
+  return tmpDir;
 }
 
 export async function GET(request: NextRequest) {
@@ -51,9 +55,10 @@ export async function GET(request: NextRequest) {
 
   const safeTitle = title.replace(/[^a-zA-Z0-9 _-]/g, "").trim().slice(0, 80) || "download";
   const uniqueId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const tmpDir = getTmpDir();
 
   if (formatId === "mp3") {
-    const outPath = path.join(TMP_DIR, `${uniqueId}.mp3`);
+    const outPath = path.join(tmpDir, `${uniqueId}.mp3`);
 
     try {
       const ytDlpPath = getDlpPath();
@@ -97,7 +102,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Invalid format" }, { status: 400 });
     }
 
-    const outTemplate = path.join(TMP_DIR, `${uniqueId}.%(ext)s`);
+    const outTemplate = path.join(tmpDir, `${uniqueId}.%(ext)s`);
     const formatSelector = `bestvideo[height<=${height}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=${height}]+bestaudio/best[height<=${height}]`;
 
     try {
@@ -112,12 +117,12 @@ export async function GET(request: NextRequest) {
       ], { maxBuffer: 1024 * 1024 * 10, timeout: 10 * 60 * 1000 });
 
       // Find the downloaded file
-      const files = fs.readdirSync(TMP_DIR).filter(f => f.startsWith(uniqueId));
+      const files = fs.readdirSync(tmpDir).filter(f => f.startsWith(uniqueId));
       if (files.length === 0) {
         return NextResponse.json({ error: "Download failed — file not found" }, { status: 500 });
       }
 
-      const outFile = path.join(TMP_DIR, files[0]);
+      const outFile = path.join(tmpDir, files[0]);
       const ext = path.extname(outFile).slice(1) || "mp4";
       const fileBuffer = fs.readFileSync(outFile);
       fs.unlink(outFile, () => {});
@@ -134,8 +139,8 @@ export async function GET(request: NextRequest) {
       const message = err instanceof Error ? err.message : String(err);
       // Clean up any partial files
       try {
-        const files = fs.readdirSync(TMP_DIR).filter(f => f.startsWith(uniqueId));
-        files.forEach(f => fs.unlink(path.join(TMP_DIR, f), () => {}));
+        const files = fs.readdirSync(tmpDir).filter(f => f.startsWith(uniqueId));
+        files.forEach(f => fs.unlink(path.join(tmpDir, f), () => {}));
       } catch {}
       return NextResponse.json({ error: "Video download failed", details: message }, { status: 500 });
     }

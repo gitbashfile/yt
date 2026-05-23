@@ -74,6 +74,12 @@ export default function Home() {
     setTimeout(() => setToast(null), 3500);
   };
 
+  const handleUrlChange = (value: string) => {
+    setUrl(value);
+    setVideoInfo(null);
+    setError(null);
+  };
+
   const handleFetch = async () => {
     if (!url.trim()) return;
     setLoading(true);
@@ -183,11 +189,7 @@ export default function Home() {
               type="url"
               placeholder="https://www.youtube.com/watch?v=..."
               value={url}
-              onChange={(e) => {
-                setUrl(e.target.value);
-                setVideoInfo(null);
-                setError(null);
-              }}
+              onChange={(e) => handleUrlChange(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleFetch()}
               disabled={loading}
             />

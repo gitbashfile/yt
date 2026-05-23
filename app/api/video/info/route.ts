@@ -15,16 +15,18 @@ function getDlpPath(): string {
     return srcPath;
   }
 
-  // On Vercel / serverless (Linux), copy the binary to /tmp to ensure execution permissions
   const destPath = path.join("/tmp", binaryName);
-  if (!fs.existsSync(destPath)) {
-    try {
-      fs.copyFileSync(srcPath, destPath);
-      fs.chmodSync(destPath, 0o755);
-    } catch (e) {
-      console.error("Failed to copy/chmod yt-dlp Linux binary:", e);
-    }
+
+  if (!fs.existsSync(srcPath)) {
+    throw new Error(`yt-dlp binary not found at ${srcPath}`);
   }
+
+  if (!fs.existsSync(destPath)) {
+    fs.copyFileSync(srcPath, destPath);
+  }
+
+  fs.chmodSync(destPath, 0o755);
+
   return destPath;
 }
 
