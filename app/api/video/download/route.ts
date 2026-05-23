@@ -97,24 +97,32 @@ export async function GET(request: NextRequest) {
     }
   } else {
     // Video download
-    const height = parseInt(formatId.replace("p", ""), 10);
-    if (isNaN(height)) {
+    const isBestVideo = formatId === "best";
+    const height = isBestVideo ? null : parseInt(formatId.replace("p", ""), 10);
+    if (!isBestVideo && (height === null || isNaN(height))) {
       return NextResponse.json({ error: "Invalid format" }, { status: 400 });
     }
 
     const outTemplate = path.join(tmpDir, `${uniqueId}.%(ext)s`);
-    const formatSelector = `bestvideo[height<=${height}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<=${height}]+bestaudio/best[height<=${height}]`;
+
+    // Use a strict format selector — never fall back to a pre-merged low-quality
+    // stream ("best") as that silently gives 360p when the merge fails.
+    // Instead: force best video-only + best audio-only merge via ffmpeg.
+    const formatSelector = isBestVideo
+      ? "bestvideo+bestaudio"
+      : `bestvideo[height<=${height}]+bestaudio`;
 
     try {
       const ytDlpPath = getDlpPath();
       await execFileAsync(ytDlpPath, [
         "--no-playlist",
+        "--no-warnings",
         "-f", formatSelector,
         "--merge-output-format", "mp4",
         "--ffmpeg-location", ffmpegStatic ? path.dirname(ffmpegStatic) : "ffmpeg",
         "-o", outTemplate,
         url,
-      ], { maxBuffer: 1024 * 1024 * 10, timeout: 10 * 60 * 1000 });
+      ], { maxBuffer: 100 * 1024 * 1024, timeout: 10 * 60 * 1000 }); // 100MB buffer, 10 min timeout
 
       // Find the downloaded file
       const files = fs.readdirSync(tmpDir).filter(f => f.startsWith(uniqueId));

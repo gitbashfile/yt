@@ -42,38 +42,47 @@ export async function GET(request: NextRequest) {
     const { stdout } = await execFileAsync(ytDlpPath, [
       "--dump-json",
       "--no-playlist",
+      "--no-warnings",
       url,
-    ]);
+    ], { maxBuffer: 50 * 1024 * 1024 }); // 50MB buffer for large format lists
 
     const info = JSON.parse(stdout);
 
-    // Filter for high-quality video+audio formats and video-only formats (for merging)
     const videoFormats: { id: string; label: string; ext: string; type: string }[] = [];
 
-    // Collect best resolutions
-    const seenResolutions = new Set<string>();
+    // Collect unique heights from ALL formats that have a video stream
+    // (YouTube stores 1080p+ as video-only streams — we must NOT exclude them)
+    const availableHeights: number[] = Array.from(new Set<number>(
+      (info.formats || [])
+        .filter((fmt: { height?: number; vcodec?: string; acodec?: string }) => (
+          fmt.height &&                 // must have a resolution
+          fmt.height >= 360 &&          // skip tiny thumbnails
+          fmt.vcodec &&                 // must have a video codec
+          fmt.vcodec !== "none"         // exclude audio-only streams
+          // NOTE: acodec can be "none" — that is fine, those are the 1080p/4K video-only streams
+        ))
+        .map((fmt: { height: number }) => fmt.height)
+    )).sort((a: number, b: number) => b - a);   // highest first
 
-    if (info.formats) {
-      // Sort formats by height descending
-      const sorted = [...info.formats].sort(
-        (a, b) => (b.height || 0) - (a.height || 0)
-      );
+    const maxHeight = availableHeights[0] || 0;
 
-      for (const fmt of sorted) {
-        if (!fmt.height || fmt.height < 480) continue;
-        const label = `${fmt.height}p${fmt.fps && fmt.fps > 30 ? ` ${fmt.fps}fps` : ""}`;
-        if (seenResolutions.has(label)) continue;
-        seenResolutions.add(label);
+    // "Best" option always first
+    videoFormats.push({
+      id: "best",
+      label: maxHeight >= 2160 ? "Best Available (4K)" : maxHeight > 0 ? `Best Available (${maxHeight}p)` : "Best Available",
+      ext: "mp4",
+      type: "video",
+    });
 
-        videoFormats.push({
-          id: `${fmt.height}p`,
-          label,
-          ext: "mp4",
-          type: "video",
-        });
-
-        if (videoFormats.length >= 5) break;
-      }
+    // Add up to 8 individual quality options
+    for (const height of availableHeights.slice(0, 8)) {
+      const qualityTag = height >= 2160 ? " 🔵 4K" : height >= 1440 ? " 2K" : height >= 1080 ? " FHD" : height >= 720 ? " HD" : "";
+      videoFormats.push({
+        id: `${height}p`,
+        label: `${height}p${qualityTag}`,
+        ext: "mp4",
+        type: "video",
+      });
     }
 
     // Always add MP3 audio option
